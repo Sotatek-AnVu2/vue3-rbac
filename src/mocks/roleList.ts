@@ -1,6 +1,12 @@
-import type { User } from '@/types/User'
+import { Role, type PermissionItem, type UserAccount } from '@/types/User'
 
-export const mockUserData: User[] = [
+export const mockAccounts: UserAccount[] = [
+  { id: '1', name: 'Admin', role: Role.Admin },
+  { id: '2', name: 'Editor', role: Role.Editor },
+  { id: '3', name: 'Viewer', role: Role.Viewer },
+]
+
+export const mockNavigationData: PermissionItem[] = [
   {
     id: '1',
     title: 'Dashboard',

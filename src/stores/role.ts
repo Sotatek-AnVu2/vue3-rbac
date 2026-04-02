@@ -1,29 +1,53 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
-import { mockUserData } from '@/mocks/roleList'
-import type { User } from '@/types/User'
+import { mockAccounts, mockNavigationData } from '@/mocks/roleList'
+import type { PermissionItem, UserAccount } from '@/types/User'
 import { DEBOUNCE_TIME } from '@/constants/common'
 
-
 export const useRoleStore = defineStore('role', () => {
-  const userList = ref<User[]>([])
-  const loading = ref(false)
+  const accountList = ref<UserAccount[]>([])
+  const currentUser = ref<UserAccount | null>(null)
 
-  function handleGetUserSuccess(payload: User[]) {
-    userList.value = payload
-    loading.value = false
+  const rawData = ref<PermissionItem[]>([])
+  const isFetching = ref(false)
+
+  function buildTree(nodes: PermissionItem[], roleId: string): PermissionItem[] {
+    return nodes
+      .filter(node => node.roles.includes(roleId))
+      .map(node => {
+        if (node.children) {
+          const validChilds = buildTree(node.children, roleId)
+          return { ...node, children: validChilds.length > 0 ? validChilds : undefined }
+        }
+        return node
+      })
   }
 
-  async function getUserList() {
-    loading.value = true
+  const listPermission = computed(() => {
+    if (!currentUser.value) return []
+    return buildTree(rawData.value, currentUser.value.role)
+  })
+
+  async function fetchAccounts() {
+    isFetching.value = true
     try {
       await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_TIME))
-      handleGetUserSuccess(mockUserData as User[])
+      accountList.value = mockAccounts
+      rawData.value = mockNavigationData as PermissionItem[]
+      if (accountList.value.length > 0) {
+        currentUser.value = accountList.value[0] || null
+      }
     } catch {
-      loading.value = false
+    } finally {
+      isFetching.value = false
     }
   }
-  return { userList, loading, getUserList }
+
+  function switchAccount(acc: UserAccount) {
+    currentUser.value = acc
+  }
+
+  return { accountList, currentUser, isFetching, listPermission, fetchAccounts, switchAccount }
 })
 
 export default null
