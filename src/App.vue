@@ -1,9 +1,18 @@
 <script setup lang="ts">
+import { onMounted } from 'vue'
+import { useRoleStore } from '@/stores/role'
 
+const roleStore = useRoleStore()
+
+onMounted(() => {
+  roleStore.getUserList()
+})
 </script>
 
 <template>
-  <h1 class="text-3xl font-medium text-center">Hello world</h1>
+  <div>
+    <h1 class="text-3xl font-medium text-center">Hello world</h1>
+  </div>
 </template>
 
 <style scoped>
