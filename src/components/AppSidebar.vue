@@ -1,87 +1,149 @@
 <script setup lang="ts">
-import { ref, computed, type Component, markRaw } from 'vue'
+import { ref, computed, watch, type Component, markRaw } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useRoleStore } from '@/stores/role'
 import * as Icons from '@heroicons/vue/24/outline'
+
+const enum DisplayMode {
+  Nav = 'nav',
+  Skeleton = 'skeleton',
+}
+
+const TIMING = {
+  roleLeave: 200,
+  roleEnter: 400,
+  skeletonVisible: 500,
+  accordionEnter: 300,
+  accordionLeave: 250,
+} as const
+
+const DEPTH_PADDING = {
+  level1: '1.25rem',
+  level2: '2.75rem',
+  level3: '4.25rem',
+} as const
 
 const route = useRoute()
 const router = useRouter()
 const store = useRoleStore()
 
 const mobileOpen = defineModel<boolean>('mobileOpen', { default: false })
-
 const isCollapsed = ref(false)
-const expandedIds = ref<Set<string>>(new Set())
+const openIds = ref<Set<string>>(new Set())
+const displayMode = ref<DisplayMode>(DisplayMode.Nav)
+let skeletonTimer: ReturnType<typeof setTimeout> | null = null
 
-function getIcon(name?: string): Component {
-  const map = Icons as Record<string, Component>
-  return markRaw(name && map[name] ? map[name] : Icons.Bars3Icon)
-}
+watch(
+  () => store.currentUser?.id,
+  (next, prev) => {
+    if (prev === undefined || next === prev) return
+    openIds.value = new Set()
+    if (skeletonTimer) clearTimeout(skeletonTimer)
+    displayMode.value = DisplayMode.Skeleton
+    const firstPath = findFirstLeaf(store.listPermission)
+    if (firstPath) goTo(firstPath)
+    skeletonTimer = setTimeout(() => {
+      displayMode.value = DisplayMode.Nav
+      skeletonTimer = null
+    }, TIMING.roleLeave + TIMING.roleEnter + TIMING.skeletonVisible)
+  },
+)
 
-function toggleItem(id: string) {
-  if (expandedIds.value.has(id)) {
-    expandedIds.value.delete(id)
-  } else {
-    expandedIds.value.add(id)
-  }
-}
-
-function goTo(path: string) {
-  router.push(path)
-}
-
-function isCurrentRoute(path: string) {
-  return route.path === path
-}
-
-function isGroupActive(item: any): boolean {
-  if (isCurrentRoute(item.path)) return true
-  for (const child of item.children ?? []) {
-    if (isCurrentRoute(child.path)) return true
-    if ((child.children ?? []).some((gc: any) => isCurrentRoute(gc.path))) return true
-  }
-  return false
-}
-
-
-const visibleItems = computed(() => {
-  const result: any[] = []
-
-  function collect(items: any[], depth: number, parentOpen: boolean) {
-    for (const item of items) {
-      const hasChildren = !!item.children?.length
-      if (parentOpen) result.push({ ...item, depth, hasChildren })
-      if (hasChildren) collect(item.children, depth + 1, parentOpen && expandedIds.value.has(item.id))
-    }
-  }
-
-  collect(store.listPermission, 0, true)
-  return result
-})
-
-const topLevelItems = computed(() =>
+const navItems = computed(() =>
   store.listPermission.map((item: any) => ({
     ...item,
     hasChildren: !!item.children?.length,
   })),
 )
 
-function getPaddingLeft(depth: number) {
-  return `${1.25 + depth * 1.5}rem`
+function findFirstLeaf(items: any[]): string | null {
+  for (const item of items) {
+    if (!item.children?.length) return item.path
+    const found = findFirstLeaf(item.children)
+    if (found) return found
+  }
+  return null
+}
+
+function resolveIcon(name?: string): Component {
+  const map = Icons as Record<string, Component>
+  return markRaw(name && map[name] ? map[name] : Icons.Bars3Icon)
+}
+
+function toggle(id: string) {
+  const ids = new Set(openIds.value)
+  ids.has(id) ? ids.delete(id) : ids.add(id)
+  openIds.value = ids
+}
+
+const goTo = (path: string) => router.push(path)
+const isActive = (path: string) => route.path === path
+
+function hasActiveDescendant(item: any): boolean {
+  return (item.children ?? []).some(
+    (child: any) => isActive(child.path) || (child.children ?? []).some((gc: any) => isActive(gc.path)),
+  )
+}
+
+function isRowActive(item: any): boolean {
+  if (item.children?.length) return !openIds.value.has(item.id) && hasActiveDescendant(item)
+  return isActive(item.path)
+}
+
+function onEnter(el: Element, done: () => void) {
+  const h = el as HTMLElement
+  h.style.overflow = 'hidden'
+  h.style.height = '0px'
+  void h.offsetHeight
+  h.style.transition = `height ${TIMING.accordionEnter}ms cubic-bezier(0.4,0,0.2,1)`
+  h.style.height = `${h.scrollHeight}px`
+  const finish = () => { h.style.cssText = ''; done() }
+  h.addEventListener('transitionend', finish, { once: true })
+  setTimeout(finish, TIMING.accordionEnter + 50)
+}
+
+function onLeave(el: Element, done: () => void) {
+  const h = el as HTMLElement
+  h.style.overflow = 'hidden'
+  h.style.height = `${h.scrollHeight}px`
+  void h.offsetHeight
+  h.style.transition = `height ${TIMING.accordionLeave}ms cubic-bezier(0.4,0,0.2,1)`
+  h.style.height = '0px'
+  const finish = () => { h.style.cssText = ''; done() }
+  h.addEventListener('transitionend', finish, { once: true })
+  setTimeout(finish, TIMING.accordionLeave + 50)
+}
+
+function onSectionEnter(el: Element, done: () => void) {
+  const h = el as HTMLElement
+  h.style.opacity = '0'
+  h.style.transform = 'translateX(-24px)'
+  void h.offsetHeight
+  h.style.transition = `opacity ${TIMING.roleEnter}ms ease-out, transform ${TIMING.roleEnter}ms ease-out`
+  h.style.opacity = '1'
+  h.style.transform = 'translateX(0)'
+  setTimeout(() => { h.style.cssText = ''; done() }, TIMING.roleEnter)
+}
+
+function onSectionLeave(el: Element, done: () => void) {
+  const h = el as HTMLElement
+  void h.offsetHeight
+  h.style.transition = `opacity ${TIMING.roleLeave}ms ease-in, transform ${TIMING.roleLeave}ms ease-in`
+  h.style.opacity = '0'
+  h.style.transform = 'translateX(-24px)'
+  setTimeout(() => { h.style.cssText = ''; done() }, TIMING.roleLeave)
 }
 </script>
 
 <template>
-  <div
-    v-if="mobileOpen"
-    class="fixed inset-0 z-40 bg-black/50 md:hidden"
-    @click="mobileOpen = false"
-  />
+  <div v-if="mobileOpen" class="fixed inset-0 z-40 bg-black/50 md:hidden" @click="mobileOpen = false" />
 
   <aside
-    class="h-[calc(100vh-64px)] overflow-y-auto bg-primary-dark text-text-muted transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] max-md:fixed max-md:left-0 max-md:top-16 max-md:z-50 max-md:w-[260px]"
+    class="h-[calc(100vh-64px)] bg-primary-dark text-text-muted transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] max-md:fixed max-md:left-0 max-md:top-16 max-md:z-50 max-md:w-[260px]"
     :class="[
-      isCollapsed ? 'md:min-w-16 md:w-16 md:overflow-visible' : 'overflow-x-hidden md:min-w-[260px] md:w-[260px]',
+      isCollapsed && !mobileOpen
+        ? 'md:min-w-16 md:w-16 md:overflow-visible'
+        : 'overflow-y-auto overflow-x-hidden md:min-w-[260px] md:w-[260px]',
       mobileOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full',
     ]"
   >
@@ -93,76 +155,148 @@ function getPaddingLeft(depth: number) {
       <component :is="isCollapsed ? Icons.ChevronDoubleRightIcon : Icons.ChevronDoubleLeftIcon" class="h-5 w-5" />
     </div>
 
-    <!-- expanded: full tree -->
-    <nav v-if="!isCollapsed" class="py-2">
-      <ul class="m-0 list-none p-0">
-        <li v-for="item in visibleItems" :key="item.id">
-          <div
-            class="flex cursor-pointer items-center gap-3 py-2.5 whitespace-nowrap transition-all duration-200 hover:bg-white/10 hover:text-text-inverse"
-            :class="[
-              item.depth === 0 ? 'text-sm font-medium' : 'text-[13px] text-text-light',
-              isCurrentRoute(item.path) ? 'bg-white/8 text-text-inverse' : '',
-            ]"
-            :style="{ paddingLeft: getPaddingLeft(item.depth), paddingRight: '1.25rem' }"
-            @click="item.hasChildren ? toggleItem(item.id) : goTo(item.path)"
-          >
-            <component v-if="item.depth === 0" :is="getIcon(item.icon)" class="h-5 w-5" />
-            <span class="flex-1 truncate">{{ item.title }}</span>
-            <Icons.ChevronDownIcon
-              v-if="item.hasChildren"
-              class="h-4 w-4 opacity-60 transition-transform duration-200"
-              :class="{ 'rotate-180': expandedIds.has(item.id) }"
-            />
-          </div>
-        </li>
-      </ul>
+    <nav v-if="!isCollapsed || mobileOpen" class="py-2">
+      <Transition :css="false" mode="out-in" @enter="onSectionEnter" @leave="onSectionLeave">
+
+        <ul v-if="displayMode === DisplayMode.Skeleton" key="skeleton" class="animate-pulse m-0 list-none px-3">
+          <li v-for="i in 5" :key="i" class="flex items-center gap-3 px-2 py-3">
+            <span class="block h-5 w-5 shrink-0 rounded bg-white/10" />
+            <span class="block h-3 w-[90%] rounded bg-white/10" />
+          </li>
+        </ul>
+
+        <ul v-else key="nav" class="m-0 list-none p-0">
+          <li v-for="item in navItems" :key="item.id">
+
+            <div
+              class="flex cursor-pointer items-center gap-3 py-2.5 pr-5 text-sm font-medium whitespace-nowrap transition-colors duration-150 hover:bg-white/10 hover:text-text-inverse"
+              :class="isRowActive(item) ? 'bg-white/8 text-text-inverse' : ''"
+              :style="{ paddingLeft: DEPTH_PADDING.level1 }"
+              @click="item.hasChildren ? toggle(item.id) : goTo(item.path)"
+            >
+              <component :is="resolveIcon(item.icon)" class="h-5 w-5 shrink-0" />
+              <span class="flex-1 truncate">{{ item.title }}</span>
+              <Icons.ChevronDownIcon
+                v-if="item.hasChildren"
+                class="h-4 w-4 shrink-0 opacity-60 transition-transform duration-[280ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
+                :class="{ 'rotate-180': openIds.has(item.id) }"
+              />
+            </div>
+
+            <Transition :css="false" @enter="onEnter" @leave="onLeave">
+              <ul v-if="item.hasChildren && openIds.has(item.id)" class="m-0 list-none p-0">
+                <li v-for="child in item.children" :key="child.id">
+
+                  <div
+                    class="flex cursor-pointer items-center gap-3 py-2.5 pr-5 text-[13px] text-text-light whitespace-nowrap transition-colors duration-150 hover:bg-white/10 hover:text-text-inverse"
+                    :class="isRowActive(child) ? 'bg-white/8 text-text-inverse' : ''"
+                    :style="{ paddingLeft: DEPTH_PADDING.level2 }"
+                    @click="child.children?.length ? toggle(child.id) : goTo(child.path)"
+                  >
+                    <span class="flex-1 truncate">{{ child.title }}</span>
+                    <Icons.ChevronDownIcon
+                      v-if="child.children?.length"
+                      class="h-4 w-4 shrink-0 opacity-60 transition-transform duration-[280ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
+                      :class="{ 'rotate-180': openIds.has(child.id) }"
+                    />
+                  </div>
+
+                  <Transition :css="false" @enter="onEnter" @leave="onLeave">
+                    <ul v-if="child.children?.length && openIds.has(child.id)" class="m-0 list-none p-0">
+                      <li v-for="gc in child.children" :key="gc.id">
+
+                        <div
+                          class="flex cursor-pointer items-center py-2.5 pr-5 text-xs text-text-light whitespace-nowrap transition-colors duration-150 hover:bg-white/10 hover:text-text-inverse"
+                          :class="isActive(gc.path) ? 'bg-white/8 text-text-inverse' : ''"
+                          :style="{ paddingLeft: DEPTH_PADDING.level3 }"
+                          @click="goTo(gc.path)"
+                        >
+                          <span class="truncate">{{ gc.title }}</span>
+                        </div>
+
+                      </li>
+                    </ul>
+                  </Transition>
+
+                </li>
+              </ul>
+            </Transition>
+
+          </li>
+        </ul>
+
+      </Transition>
     </nav>
 
     <nav v-else class="py-2">
-      <ul class="m-0 list-none p-0">
-        <li v-for="item in topLevelItems" :key="item.id" class="group relative">
+      <ul v-if="displayMode === DisplayMode.Skeleton" class="animate-pulse m-0 list-none p-0">
+        <li v-for="i in 4" :key="i" class="flex justify-center py-3">
+          <span class="block h-5 w-5 rounded bg-white/10" />
+        </li>
+      </ul>
+
+      <ul v-else class="m-0 list-none p-0">
+        <li v-for="item in navItems" :key="item.id" class="group/nav relative">
+
           <div
-            class="flex cursor-pointer items-center gap-3 py-2.5 text-sm font-medium whitespace-nowrap transition-all duration-200 hover:bg-white/10 hover:text-text-inverse md:justify-center md:!px-0"
-            :class="isGroupActive(item) ? 'bg-white/8 text-text-inverse' : ''"
+            class="flex cursor-pointer justify-center py-2.5 transition-colors duration-200 hover:bg-white/10 hover:text-text-inverse"
+            :class="isRowActive(item) ? 'bg-white/8 text-text-inverse' : ''"
             @click="!item.hasChildren && goTo(item.path)"
           >
-            <component :is="getIcon(item.icon)" class="h-5 w-5" />
-            <span class="flex-1 truncate md:hidden">{{ item.title }}</span>
+            <component :is="resolveIcon(item.icon)" class="h-5 w-5" />
           </div>
 
-          <div
-            class="absolute left-full top-0 z-[100] ml-1 hidden min-w-[180px] -translate-x-1.5 rounded-lg bg-[#1e293b] py-1.5 opacity-0 shadow-[0_8px_24px_rgb(0_0_0/35%)] transition-all duration-200 pointer-events-none md:block group-hover:translate-x-0 group-hover:opacity-100 group-hover:pointer-events-auto"
-          >
-            <div
-              class="cursor-pointer px-4 py-2 text-[13px] font-semibold text-text-inverse"
-              @click="goTo(item.path)"
-            >
-              {{ item.title }}
-            </div>
+          <div class="pointer-events-none absolute left-full top-0 z-[100] -mt-3 pt-3 pb-3 opacity-0 transition-opacity duration-200 ease-out group-hover/nav:pointer-events-auto group-hover/nav:opacity-100">
+            <div class="ml-2 min-w-[200px] -translate-x-2 rounded-lg bg-[#1e293b] py-1 shadow-[0_8px_32px_rgb(0_0_0/40%)] transition-transform duration-200 ease-out group-hover/nav:translate-x-0">
 
-            <template v-if="item.hasChildren">
-              <template v-for="child in item.children" :key="child.id">
+              <template v-if="!item.hasChildren">
                 <div
-                  class="cursor-pointer whitespace-nowrap px-4 py-[7px] text-[13px] text-text-light transition-colors duration-150 hover:bg-white/8 hover:text-text-inverse"
-                  :class="{ 'bg-white/8 !text-text-inverse font-semibold': isCurrentRoute(child.path) }"
-                  @click="goTo(child.path)"
-                >
-                  {{ child.title }}
-                </div>
-                <div
-                  v-for="grandchild in child.children ?? []"
-                  :key="grandchild.id"
-                  class="cursor-pointer whitespace-nowrap py-[7px] pl-7 pr-4 text-xs text-text-light transition-colors duration-150 hover:bg-white/8 hover:text-text-inverse"
-                  :class="{ 'bg-white/8 !text-text-inverse font-semibold': isCurrentRoute(grandchild.path) }"
-                  @click="goTo(grandchild.path)"
-                >
-                  {{ grandchild.title }}
+                  class="cursor-pointer px-4 py-2.5 text-[13px] font-semibold text-text-inverse transition-colors hover:bg-white/8"
+                  @click="goTo(item.path)"
+                >{{ item.title }}</div>
+              </template>
+
+              <template v-else>
+                <div v-for="child in item.children" :key="child.id">
+
+                  <div
+                    v-if="!child.children?.length"
+                    class="cursor-pointer whitespace-nowrap px-4 py-2.5 text-[13px] transition-colors duration-150 hover:bg-white/8 hover:text-text-inverse"
+                    :class="isActive(child.path) ? 'text-text-inverse font-medium' : 'text-text-light'"
+                    @click="goTo(child.path)"
+                  >{{ child.title }}</div>
+
+                  <div v-else class="group/child relative">
+                    <div
+                      class="flex cursor-pointer items-center justify-between gap-6 whitespace-nowrap px-4 py-2.5 text-[13px] transition-colors duration-150 hover:bg-white/8 hover:text-text-inverse"
+                      :class="(child.children ?? []).some((gc: any) => isActive(gc.path)) ? 'text-text-inverse font-medium' : 'text-text-light'"
+                    >
+                      {{ child.title }}
+                      <Icons.ChevronRightIcon class="h-3.5 w-3.5 shrink-0 opacity-50" />
+                    </div>
+
+                    <div class="pointer-events-none absolute left-full top-0 z-[110] -mt-3 pt-3 pb-3 opacity-0 transition-opacity duration-200 ease-out group-hover/child:pointer-events-auto group-hover/child:opacity-100">
+                      <div class="ml-1 min-w-[160px] -translate-x-2 rounded-lg bg-[#1e293b] py-1 shadow-[0_8px_32px_rgb(0_0_0/40%)] transition-transform duration-200 ease-out group-hover/child:translate-x-0">
+                        <div
+                          v-for="gc in child.children"
+                          :key="gc.id"
+                          class="cursor-pointer whitespace-nowrap px-4 py-2.5 text-[13px] transition-colors duration-150 hover:bg-white/8 hover:text-text-inverse"
+                          :class="isActive(gc.path) ? 'bg-white/10 text-text-inverse font-medium' : 'text-text-light'"
+                          @click="goTo(gc.path)"
+                        >{{ gc.title }}</div>
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               </template>
-            </template>
+
+            </div>
           </div>
         </li>
       </ul>
     </nav>
+
   </aside>
 </template>
+
