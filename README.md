@@ -46,3 +46,10 @@ npm run build
 ```sh
 npm run lint
 ```
+
+## Approach to Recursion Logic
+
+When handling the multi-level navigation tree in the `AppSidebar` component, our approach to recursion logic is separated into two parts:
+
+1. **Tree Traversal (Data Level)**: We use pure recursive functions (e.g., `findFirstLeaf`) to deeply traverse the permission tree structure. This successfully finds the first accessible route (a "leaf" node with no children) to automatically redirect users when their roles change, adapting to any arbitrary depth of the tree.
+2. **Template Rendering (View Level)**: Instead of using recursive Vue components—which can complicate localized styling and animations—the template uses explicit nested loops for a predefined depth (3 levels). This provides strict, granular control over hover flyouts, accordions, and CSS transition timings specific to each navigation hierarchy level.
